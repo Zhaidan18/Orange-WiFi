@@ -1,1 +1,167 @@
+name: Build Orange WiFi - Orange Pi One
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - csdg-main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Orange Pi One Image
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Orange-WiFi
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            git \
+            curl \
+            wget \
+            ca-certificates \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libncurses-dev \
+            libelf-dev \
+            python3 \
+            python3-dev \
+            python3-pip \
+            rsync \
+            unzip \
+            zip \
+            xz-utils \
+            debootstrap \
+            qemu-user-static \
+            parted \
+            dosfstools \
+            u-boot-tools \
+            device-tree-compiler
+
+      - name: Clone Armbian build system
+        run: |
+          git clone --depth=1 \
+            https://github.com/armbian/build.git \
+            armbian-build
+
+      - name: Verify Orange Pi One target
+        run: |
+          cd armbian-build
+
+          if ! grep -Riq "orangepione" config/boards; then
+            echo "ERROR: Orange Pi One board configuration was not found."
+            exit 1
+          fi
+
+          echo "Orange Pi One board configuration detected."
+
+      - name: Prepare Orange WiFi overlay
+        run: |
+          mkdir -p armbian-build/userpatches
+
+          cp -a \
+            admin \
+            api \
+            binary \
+            conf \
+            css \
+            fonts \
+            js \
+            lib \
+            modified \
+            processed \
+            simulation \
+            sish \
+            ssl \
+            test_updates \
+            *.php \
+            *.html \
+            *.service \
+            *.cpp \
+            *.py \
+            *.c \
+            *.h \
+            *.sh \
+            *.txt \
+            armbian-build/userpatches/ 2>/dev/null || true
+
+      - name: Build Armbian Orange Pi One
+        working-directory: armbian-build
+        run: |
+          sudo ./compile.sh \
+            BOARD=orangepione \
+            BRANCH=current \
+            RELEASE=bookworm \
+            BUILD_MINIMAL=yes \
+            BUILD_DESKTOP=no \
+            KERNEL_CONFIGURE=no \
+            USE_TORRENT=no \
+            CLEAN_LEVEL="make,debs,cache,oldcache"
+
+      - name: Locate generated image
+        run: |
+          mkdir -p final-image
+
+          find armbian-build/output \
+            -type f \
+            \( \
+              -name "*.img" \
+              -o -name "*.img.xz" \
+              -o -name "*.img.gz" \
+            \) \
+            -print
+
+      - name: Rename Orange Pi One image
+        run: |
+          IMAGE=$(find armbian-build/output \
+            -type f \
+            -name "*.img.xz" \
+            | head -n 1)
+
+          if [ -z "$IMAGE" ]; then
+            IMAGE=$(find armbian-build/output \
+              -type f \
+              -name "*.img" \
+              | head -n 1)
+          fi
+
+          if [ -z "$IMAGE" ]; then
+            echo "ERROR: No Orange Pi One image was generated."
+            exit 1
+          fi
+
+          echo "Image found:"
+          echo "$IMAGE"
+
+          cp "$IMAGE" \
+            final-image/Orange-WiFi-OrangePi-One.img.xz
+
+          ls -lh final-image/
+
+      - name: Generate SHA256
+        run: |
+          cd final-image
+          sha256sum Orange-WiFi-OrangePi-One.img.xz \
+            > Orange-WiFi-OrangePi-One.img.xz.sha256
+
+          cat Orange-WiFi-OrangePi-One.img.xz.sha256
+
+      - name: Upload Orange Pi One image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orange-WiFi-OrangePi-One
+          path: |
+            final-image/Orange-WiFi-OrangePi-One.img.xz
+            final-image/Orange-WiFi-OrangePi-One.img.xz.sha256
+          if-no-files-found: error
+          retention-days: 30
